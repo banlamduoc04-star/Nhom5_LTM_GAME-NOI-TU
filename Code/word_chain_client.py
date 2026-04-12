@@ -202,7 +202,7 @@ def main():
     """Main entry point."""
     player_name = input("Enter player name: ").strip() or "Player"
     
-    client = WordChainClientV3(player_name=player_name)
+    client = WordChainClient(player_name=player_name)
     
     if client.connect():
         client.play()
