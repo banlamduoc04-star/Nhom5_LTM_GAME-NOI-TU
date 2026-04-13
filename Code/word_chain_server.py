@@ -44,7 +44,7 @@ class Match:
         
         # Timing
         self.turn_start_time = time.time()
-        self.turn_timeout = 10  # seconds per turn
+        self.turn_timeout = 15  # seconds per turn
 
         # turn count để tính điểm
         self.score = {
@@ -77,6 +77,41 @@ class Match:
         else:
             return self.player1_name
     
+    #trả về socket của đối thủ  
+    def get_opponent_socket(self, my_socket):
+        if my_socket == self.player1_socket:
+            return self.player2_socket
+        else:
+            return self.player1_socket
+ 
+    #trả về tên của đối thủ
+    def get_opponent_name(self, my_socket):
+        if my_socket == self.player1_socket:
+            return self.player2_name
+        else:
+            return self.player1_name
+    
+    def start_timeout_watcher(self, server):
+        def watcher():
+            while self.game_active:
+                # đợi cho tới khi có turn mới hoặc timeout
+                is_set = self.turn_event.wait(timeout=self.turn_timeout)
+                self.turn_event.clear()
+
+                if not is_set:  # hết giờ
+                    with self.game_lock:
+                        if not self.game_active:
+                            return
+
+                        loser_socket = self.current_player_socket
+                        loser_name = self.current_player_name
+
+                    # gọi server để end game
+                    server._end_match(self, loser_socket, loser_name, 'timeout')
+                    return
+
+        threading.Thread(target=watcher, daemon=True).start()
+    
     def switch_turn(self):
 
         self.current_player_socket = self.get_next_player_socket()
@@ -84,8 +119,7 @@ class Match:
         self.turn_start_time = time.time()
         self.turn_event.set()
 
-        # tăng lượt cho player khi đến lược
-        self.turns[self.current_player_name] += 1
+        self.score[self.current_player_name] += 1
 
 class WordChainServer:
 
@@ -188,14 +222,16 @@ class WordChainServer:
             with self.queue_lock:
                 self.waiting_queue.append((client_socket, player_name))
                 
-                # Check if we have 2 players - if so, start a match
-                if len(self.waiting_queue) >= 2:
+                # Check if we can start a match
+                # note dùng while để xử lý trg hợp có nhiều hơn 2 người đang chờ, tránh chỉ start 1 ván rồi thôi
+                while len(self.waiting_queue) >= 2:
                     # Pop 2 players from queue
                     player1_socket, player1_name = self.waiting_queue.pop(0)
                     player2_socket, player2_name = self.waiting_queue.pop(0)
                     
                     # Create match
                     match = Match(player1_socket, player1_name, player2_socket, player2_name, self.dictionary)
+                    match.start_timeout_watcher(self)
                     
                     with self.matches_lock:
                         self.matches[player1_socket] = match
@@ -240,15 +276,25 @@ class WordChainServer:
                     buffer += data
                     while '\n' in buffer:
                         line, buffer = buffer.split('\n', 1)
-                        if line.strip():
+                        if line.strip():   
                             try:
                                 msg_data = json.loads(line)
-                                if msg_data.get('type') == 'word':
-                                    word = msg_data.get('value', '').strip().lower()
-                                    self.process_word_submission(client_socket, player_name, word)
+                                
+                                with self.matches_lock:
+                                    match = self.matches.get(client_socket)
+                                if not match:
+                                    self.send_message(client_socket, {
+                                        'type': 'error',
+                                        'message': 'No active match'
+                                    })
+                                    return
+                                self._dispatch(client_socket, player_name, msg_data, match)
+                                
                             except json.JSONDecodeError:
-                                pass 
-                            self._dispatch(client_socket, player_name, msg_data, self.matches[client_socket])
+                                self.send_message(client_socket, {
+                                    'type': 'error',
+                                    'message': 'message unvalid'
+                                })
                 
                 except (ConnectionResetError, BrokenPipeError, OSError):
                     break
@@ -261,38 +307,8 @@ class WordChainServer:
             if player_name:
                 print(f"[SERVER] Player '{player_name}' error: {e}")
         
-        finally:
-            # Remove from queue if still there
-            with self.queue_lock:
-                self.waiting_queue = [(s, n) for s, n in self.waiting_queue if s != client_socket]
-            
-            # Remove from active matches
-            with self.matches_lock:
-                if client_socket in self.matches:
-                    match = self.matches.pop(client_socket)
-                    opponent_socket = match.player2_socket if match.player1_socket == client_socket else match.player1_socket
-                    
-                    if opponent_socket in self.matches:
-                        del self.matches[opponent_socket]
-                    
-                    # Notify opponent
-                    if opponent_socket:
-                        try:
-                            self.send_message(opponent_socket, {
-                                'type': 'opponent_disconnected',
-                                'message': f"{player_name} disconnected"
-                            })
-                        except:
-                            pass
-            
-            # Close socket
-            try:
-                client_socket.close()
-            except:
-                pass
-            
-            if player_name:
-                print(f"[SERVER] Player '{player_name}' disconnected")
+        finally:                  
+            self._cleanup(client_socket, player_name, match)
     
     def process_word_submission(self, player_socket, player_name, word):
         """Process a word submission from a player."""
@@ -301,7 +317,8 @@ class WordChainServer:
                 return
             
             match = self.matches[player_socket]
-        
+                       
+        word = normalize_vietnamese(word).lower()
         with match.game_lock:
             # Check if it's this player's turn
             if match.current_player_socket != player_socket:
@@ -323,7 +340,7 @@ class WordChainServer:
             
             # Check if word starts with correct letter
             required_letter = get_next_letter_constraint(match.current_word)
-            if not is_valid_chain_move(word, match.current_word):
+            if not is_valid_chain_move(match.current_word, word):
                 self.send_message(player_socket, {
                     'type': 'error',
                     'message': f"Word must start with '{required_letter}'",
@@ -349,16 +366,17 @@ class WordChainServer:
                 })
                 return
             
+            # Get opponent socket
+            opponent_socket = match.get_next_player_socket()
+            
             # Word is valid - accept it
             match.current_word = word
             match.used_words.add(word)
             match.word_history.append((word, player_name))
             next_letter = get_next_letter_constraint(word)
-            match.score[player_name] += 1
             match.switch_turn()
             
-            # Get opponent socket
-            opponent_socket = match.get_next_player_socket()
+
             
             # Message to current player
             msg_current = {
@@ -367,7 +385,7 @@ class WordChainServer:
                 'player': player_name,
                 'next_letter': next_letter,
                 'your_turn': False,
-                'score':       match.score,
+                'score':       self.matches[player_socket].score,
                 
             }
             self.send_message(player_socket, msg_current)
@@ -379,20 +397,19 @@ class WordChainServer:
                 'player': player_name,
                 'next_letter': next_letter,
                 'your_turn': True,
-                'score':       match.score,
+                'score': match.score
             }
             self.send_message(opponent_socket, msg_opponent)
             
             print(f"[GAME] {player_name}: {word} -> next: {next_letter}")
     
     def send_message(self, client_socket, data):
-        """Send JSON message to client."""
+        """Gửi JSON + newline. Không ném exception ra ngoài."""
         try:
-            message = json.dumps(data, ensure_ascii=False)
-            client_socket.sendall((message + '\n').encode('utf-8'))
+            msg = json.dumps(data, ensure_ascii=False) + '\n'
+            client_socket.sendall(msg.encode('utf-8'))
         except Exception as e:
-            print(f"[SERVER] Error sending message: {e}")
-
+            print(f"[SERVER] Send error: {e}")
 
     # ─── Router lệnh ──────────────────────────────────────────────
     def _dispatch(self, sock, player_name, msg, match):
@@ -400,7 +417,8 @@ class WordChainServer:
         msg_type = msg.get('type')
 
         if msg_type == 'word':
-            word = msg.get('value', '').strip()
+            rword = msg.get('value', '').strip()
+            word = normalize_vietnamese(rword).lower()
             self.process_word_submission(sock, player_name, word)
 
         elif msg_type == 'giveup':
@@ -426,7 +444,7 @@ class WordChainServer:
         winner_name = match.get_opponent_name(loser_socket)
 
         reason_text = {
-            'timeout':    f"{loser_name} ran out of time ({Match.TURN_TIMEOUT}s)",
+            'timeout':    f"{loser_name} ran out of time ({match.turn_timeout}s)",
             'giveup':     f"{loser_name} gave up",
             'disconnect': f"{loser_name} disconnected",
         }.get(reason, reason)
@@ -464,12 +482,25 @@ class WordChainServer:
 
         # Xóa khỏi matches
         with self.matches_lock:
-            self.matches.pop(sock, None)
+            match = self.matches.pop(sock, None)
 
-        # Giải phóng tên
-        if player_name:
-            with self.names_lock:
-                self.active_names.discard(player_name)
+            if match:
+                opponent = match.get_opponent_socket(sock)
+                if opponent in self.matches:
+                    self.matches.pop(opponent, None)
+
+                # Giải phóng tên
+                if player_name:
+                    with self.names_lock:
+                        if player_name in self.active_names:
+                            self.send_message(sock, {
+                                'type': 'error',
+                                'message': 'Name already taken'
+                            })
+                            return
+                        self.active_names.add(player_name)
+                        self.active_names.discard(player_name)
+                        
 
         # Đóng socket
         try:
@@ -480,18 +511,6 @@ class WordChainServer:
         if player_name:
             print(f"[SERVER] '{player_name}' disconnected | "
                   f"Online: {len(self.active_names)}")
-
-    # ═════════════════════════════════════════════════════════════
-    #  GỬI JSON AN TOÀN
-    # ═════════════════════════════════════════════════════════════
-    def send_message(self, client_socket, data):
-        """Gửi JSON + newline. Không ném exception ra ngoài."""
-        try:
-            msg = json.dumps(data, ensure_ascii=False) + '\n'
-            client_socket.sendall(msg.encode('utf-8'))
-        except Exception as e:
-            print(f"[SERVER] Send error: {e}")
-
 
 
     def stop(self):
