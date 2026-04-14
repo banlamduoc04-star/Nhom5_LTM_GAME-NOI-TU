@@ -90,6 +90,45 @@ def get_next_letter_constraint(word):
     return None
 
 
+def load_dictionary(filepath):
+    """
+    Load dictionary from file into a set for O(1) lookup.
+
+    Args:
+        filepath (str): Path to dictionary file
+
+    Returns:
+        set: Normalized words
+
+    Raises:
+        FileNotFoundError: if file does not exist
+    """
+    words = set()
+    with open(filepath, 'r', encoding='utf-8') as f:
+        for line in f:
+            word = line.strip()
+            if word:
+                normalized = normalize_vietnamese(word)
+                if normalized:
+                    words.add(normalized)
+    return words
+
+
+def is_valid_word(word, dictionary):
+    """
+    Check if a word exists in the given dictionary set.
+
+    Args:
+        word (str): Word to check
+        dictionary (set): Set of normalized words
+
+    Returns:
+        bool: True if word is in dictionary
+    """
+    normalized = normalize_vietnamese(word)
+    return normalized in dictionary
+
+
 def validate_player_name(name):
     """
     Basic validation for player name.
