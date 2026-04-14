@@ -12,13 +12,13 @@ Truyền tải dữ liệu thời gian thực
 Xác thực dữ liệu phía server
 Luật chơi
 Mỗi người chơi nhập một từ tiếng Việt.
-Từ tiếp theo phải bắt đầu bằng chữ cái cuối của từ trước đó.
+Từ tiếp theo phải bắt đầu bằng chữ cuối của từ trước đó.
 Từ nhập phải tồn tại trong từ điển tiếng Việt.
 Server kiểm tra tính hợp lệ và gửi kết quả đến tất cả người chơi.
 
 Ví dụ chuỗi hợp lệ:
 
-a → an → ng → ga → an
+con vịt → vịt trời → trời đêm → đêm tối → tối đen
 Kiến trúc hệ thống
 ┌─────────────┐    TCP Socket    ┌─────────────┐
 │   Client 1  │◄────────────────►│             │
@@ -49,9 +49,11 @@ word-chain-game/
 ├── word_chain_server.py
 ├── word_chain_client.py
 ├── word_validation.py
+├── dictionary_system.py
 ├── vietnamese_dictionary.txt
-├── README.md
-└── test_*.py
+├── Ui.py
+├── main.py
+└── README.md
 Cách chạy chương trình
 Bước 1: Khởi động Server
 python word_chain_server.py
@@ -113,15 +115,15 @@ Kết quả kiểm thử
 
 === TEST 1: Single Player Word Chain ===
 Player joined
-Word 1: 'a' accepted (next: a)
-Word 2: 'an' accepted (next: n)
-Word 3: 'ng' accepted (next: g)
-Word 4: 'ga' accepted (next: a)
-Word 5: 'an' accepted (next: n)
+Word 1: 'con vịt' accepted (next: vịt)
+Word 2: 'vịt trời' accepted (next: trời)
+Word 3: 'trời đêm' accepted (next: đêm)
+Word 4: 'đêm tối' accepted (next: tối)
+Word 5: 'tối đen' accepted (next: đen)
 
 === TEST 2: Invalid Word Chain Detection ===
 First word 'ba' sent
-Invalid chain rejected: Word must start with 'n'
+Invalid chain rejected: Word must start with 'con'
 
 === TEST 3: Player Name Validation ===
 Empty name rejected

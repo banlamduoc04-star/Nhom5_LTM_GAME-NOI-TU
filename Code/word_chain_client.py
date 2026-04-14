@@ -9,7 +9,7 @@ import threading
 from queue import Queue
 
 
-class WordChainClientV3:
+class WordChainClient:
     """Simple client for word chain game."""
     
     def __init__(self, host='localhost', port=5000, player_name='Player'):
