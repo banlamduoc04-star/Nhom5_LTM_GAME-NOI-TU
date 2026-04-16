@@ -73,13 +73,15 @@ Dự án sử dụng các module chuẩn của Python.
 
 ```
 word-chain-game/
-├── main.py                    # Điểm vào chính
-├── UI.py                      # Giao diện người dùng (Tkinter)
-├── word_chain_server.py       # Server TCP xử lý game
-├── word_chain_client.py       # Client kết nối server
-├── word_validation.py         # Logic xác thực từ và chuỗi
-├── dictionary_system.py       # Hệ thống quản lý từ điển
-├── vietnamese_dictionary.txt  # File từ điển tiếng Việt
+├── CODE
+  ├── UI.py                      # Giao diện người dùng (Tkinter)
+    ├──Client
+    ├── word_chain_client.py      # Server TCP xử lý game
+    ├──SEVER
+    ├── word_chain_server.py      # Client kết nối server
+    ├── word_validation.py         # Logic xác thực từ và chuỗi
+    ├── dictionary_system.py       # Hệ thống quản lý từ điển
+    ├── vietnamese_dictionary.txt  # File từ điển tiếng Việt
 └── README.md
 ```
 
