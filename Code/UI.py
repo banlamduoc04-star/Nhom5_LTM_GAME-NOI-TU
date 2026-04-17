@@ -107,7 +107,7 @@ class GameUI:
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
 
         self.sock         = None
-        self.name         = ""
+        self.name         = None
         self.running      = False
         self.current_word = None
         self.next_letter  = ""
@@ -175,6 +175,51 @@ class GameUI:
                      disabledbackground=BG3, disabledforeground=FG3)
         e.pack(fill="x", ipady=8, padx=8)
         return e, wrap
+    
+    def _build_waiting(self):
+        self._clear()
+        self.root.geometry("400x500")
+
+        tk.Frame(self.root, bg=ACCENT, height=3).pack(fill="x")
+
+        body = tk.Frame(self.root, bg=BG, padx=30, pady=30)
+        body.pack(fill="both", expand=True)
+
+        tk.Label(body, text="🔍", font=("Segoe UI", 40), bg=BG).pack(pady=10)
+
+        tk.Label(body, text="ĐANG TÌM ĐỐI THỦ",
+                font=("Segoe UI", 16, "bold"),
+                bg=BG, fg=FG).pack()
+
+        self._waiting_var = tk.StringVar()
+        tk.Label(body, textvariable=self._waiting_var,
+                font=F_LABEL, bg=BG, fg=FG2).pack(pady=10)
+
+        FlatButton(body, "HUỶ TÌM TRẬN", self._cancel_waiting, bg=BG3, fg=FG2, height=45).pack(fill="x", pady=20)
+
+        self._start_waiting_anim()
+        
+    def _start_waiting_anim(self):
+        self._wait_step = 0
+        self._animate_waiting()
+
+    def _animate_waiting(self):
+        if not self.running:
+            return
+
+        frames = ["●○○", "●●○", "●●●", "○●●", "○○●"]
+        frame = frames[self._wait_step % len(frames)]
+
+        if hasattr(self, '_waiting_var'):
+            self._waiting_var.set(f"Đang tìm đối thủ  {frame}")
+
+        self._wait_step += 1
+        self._dot_job = self.root.after(400, self._animate_waiting)
+    
+    def _cancel_waiting(self):
+        self.running = False
+        self._close_socket()
+        self._build_login()
 
     # ══════════════════════════════════════════════════
     #  SCREEN: LOGIN
@@ -317,7 +362,7 @@ class GameUI:
 
     def _build_end(self, you_win, reason, score):
         self._clear()
-        self.root.geometry("380x380")
+        self.root.geometry("400x500")
 
         stripe = SUCCESS if you_win else DANGER
         tk.Frame(self.root, bg=stripe, height=4).pack(fill="x")
@@ -452,14 +497,14 @@ class GameUI:
             self.root.after(0, lambda: self._build_end(yw, rs, sc))
 
         elif t == "error":
-            err = msg.get("message", "Lỗi")
-            if not self.current_word:
-                self.running = False
-                self._close_socket()
-                self.root.after(0, self._build_login)
-                self.root.after(60, lambda: self._set_status(f"✗  {err}", DANGER))
-            else:
-                self.root.after(0, lambda: self._error_var.set(f"⚠  {err}") if hasattr(self,'_error_var') else None)
+                    err = msg.get("message", "Lỗi")
+                    if not self.current_word:
+                        self.running = False
+                        self._close_socket()
+                        self.root.after(0, self._build_login)
+                        self.root.after(100, lambda: self._set_status(f"x {err}", DANGER))
+                    else:
+                        self.root.after(0, lambda: self._error_var.set(f"⚠  {err}") if hasattr(self,'_error_var') else None)
 
         elif t in ("opponent_disconnected", "opponent_eliminated"):
             self.stop_timer()
@@ -520,7 +565,34 @@ class GameUI:
     def _rematch(self):
         self.running = False
         self._close_socket()
-        self._build_login()
+
+        # hiện màn chờ
+        self._build_waiting()
+
+        # reconnect
+        self._do_reconnect()
+    
+    def _do_reconnect(self):
+        if not self.name:
+            self._build_login()
+            return
+
+        try:
+            self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.sock.settimeout(5)
+            self.sock.connect((SERVER_HOST, SERVER_PORT))
+            self.sock.settimeout(None)
+        except Exception as e:
+            self._set_status(f"✗  Không kết nối được: {e}", DANGER)
+            self._close_socket()
+            return
+
+        # 🔥 gửi lại tên cũ
+        self._send_raw({"type": "name", "value": self.name})
+
+        self.running = True
+        threading.Thread(target=self._listen, daemon=True).start()
+        
 
     def _set_status(self, text, color=FG2):
         if hasattr(self, '_status_var'):
