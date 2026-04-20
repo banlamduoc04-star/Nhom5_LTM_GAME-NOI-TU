@@ -5,6 +5,7 @@ Simple TCP server with immediate match-found system (no rooms).
 """
 
 import socket
+import os
 import threading
 import json
 import time
@@ -36,6 +37,9 @@ class Match:
 
         # Trạng thái ván
         self.game_active           = True
+        
+        if not dictionary:
+            raise ValueError("Dictionary is empty")
         self.current_word          = random.choice(list(dictionary))
         self.current_player_socket = None
         self.current_player_name   = None
@@ -61,7 +65,9 @@ class Match:
             self.current_player_name = player2_name
         
         print(f"[MATCH] Started: {player1_name} vs {player2_name} | Starting word: {self.current_word} | {self.current_player_name}'s turn")
-    
+
+        
+        
     
     def get_next_player_socket(self):
     
@@ -137,6 +143,11 @@ class WordChainServer:
         
         self.active_names = set()
         self.names_lock   = threading.Lock()
+        
+        # Lấy đường dẫn tuyệt đối của thư mục chứa file server hiện tại
+        if dictionary_file == 'vietnamese_dictionary.txt':
+            base_dir = os.path.dirname(os.path.abspath(__file__))
+            dictionary_file = os.path.join(base_dir, 'vietnamese_dictionary.txt')
         
         
         
@@ -215,19 +226,15 @@ class WordChainServer:
             
             with self.names_lock:
                 if player_name in self.active_names:
-                    print(f"[NAME] '{player_name}' is already active → forcing cleanup for rematch")
+                    # Gửi lỗi về client nếu tên đã tồn tại
+                    self.send_message(client_socket, {
+                        'type': 'error', 
+                        'message': f"Tên '{player_name}' đã có người sử dụng!"
+                    })
+                    print(f"[NAME REJECTED] {player_name} already exists")
+                    return # Ngắt kết nối ngay lập tức để người dùng nhập lại
 
-                    # Kiểm tra xem tên này có thật sự đang trong trận không
-                    still_in_match = False
-                    with self.matches_lock:
-                        for m in list(self.matches.values()):
-                            if m.player1_name == player_name or m.player2_name == player_name:
-                                still_in_match = True
-                                break
-                    
-                    if not still_in_match:
-                        self.active_names.discard(player_name)   # Xóa tên cũ để cho reconnect
-
+                # Nếu tên hợp lệ và chưa có, mới thêm vào danh sách online
                 self.active_names.add(player_name)
             
             # Add to waiting queue
